@@ -1,0 +1,103 @@
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
+import numpy as np
+from src.grid_world import GridWorld
+from td.utils import state_to_index
+
+env = GridWorld()
+
+# ================================================================
+# Sarsa —— On-Policy TD Control
+# ================================================================
+# 目标：学习最优策略，估计 Q(s,a)
+#
+# 名字来源：每次更新用到 (S, A, R, S', A') 五元组
+#
+# 更新公式（每步执行）：
+#   Q(s,a) ← Q(s,a) - α * [Q(s,a) - (r + γ * Q(s',a'))]
+#   注意：a' 是用当前 ε-greedy 策略在 s' 上选出的动作（on-policy）
+#
+# 算法思路：
+#   for ep in range(num_episodes):
+#     s = env.reset()
+#     用 ε-greedy 在 s 上选 a
+#     while not done（最多200步）:
+#       执行 a，得到 r, s'
+#       用 ε-greedy 在 s' 上选 a'   ← 关键：先选好 a' 再更新
+#       Q[s,a] -= alpha * (Q[s,a] - (r + gamma * Q[s',a']))
+#       用 ε-greedy 更新 policy_matrix[s]
+#       s ← s'，a ← a'
+# ================================================================
+
+def epsilon_greedy(epsilon, Q, policy_matrix, state_idx):
+    num_actions = policy_matrix.shape[1]
+    state_action_probs = epsilon / (np.ones(num_actions) * num_actions)
+    state_action_probs[np.argmax(Q[state_idx])] += 1 - epsilon
+    return state_action_probs
+
+def sarsa(env, num_episodes=5000, alpha=0.1, gamma=0.9, epsilon_start=1.0, epsilon_end=0.05):
+    num_states = env.num_states
+    num_actions = len(env.action_space)
+
+    Q = np.zeros((num_states, num_actions))
+    policy_matrix = np.ones((num_states, num_actions)) / num_actions
+
+    # 你来写
+    # ε 线性衰减：epsilon = epsilon_start + (epsilon_end - epsilon_start) * ep / (num_episodes - 1)
+    # ε-greedy 策略更新：
+    #   policy_matrix[s] = epsilon / num_actions
+    #   policy_matrix[s][argmax Q[s]] += 1 - epsilon
+    for ep in range(num_episodes):
+        # ε 线性衰减
+        epsilon = epsilon_start + (epsilon_end - epsilon_start) * ep / (num_episodes - 1)
+        
+        #  起始state
+        state, _ = env.reset()
+        state_idx = state_to_index(state, env.env_size)
+        
+        # 用 ε-greedy 在 s 上选 a
+        state_action_probs = epsilon_greedy(epsilon, Q, policy_matrix, state_idx)
+        action_idx = np.random.choice(num_actions, p=state_action_probs)
+        action = env.action_space[action_idx]
+        
+        done = False
+        step = 0
+        while not done and step < 200:
+            # 执行 a，得到 r, s'
+            next_state, reward, done, _ = env.step(action)
+            next_state_idx = state_to_index(next_state, env.env_size)
+            state_action_probs = epsilon_greedy(epsilon, Q, policy_matrix, next_state_idx)
+            
+            # 用 ε-greedy 在 s' 上选 a'
+            next_action_idx = np.random.choice(num_actions, p=state_action_probs)
+            
+            # 更新Q
+            Q[state_idx, action_idx] -= alpha * (Q[state_idx, action_idx] - (reward + gamma * Q[next_state_idx, next_action_idx]))
+            
+            # 用 ε-greedy 更新 policy_matrix[s]
+            policy_matrix[state_idx] = epsilon / num_actions
+            policy_matrix[state_idx, np.argmax(Q[state_idx])] += 1 - epsilon
+            
+            state_idx, action_idx = next_state_idx, next_action_idx
+            action = env.action_space[action_idx]
+            step += 1
+        
+    return Q, policy_matrix
+
+
+if __name__ == "__main__":
+    Q, best_policy = sarsa(env, num_episodes=500)
+
+    state, _ = env.reset()
+    env.render()
+    done = False
+    while not done:
+        s_idx = state_to_index(state, env.env_size)
+        action = env.action_space[np.argmax(best_policy[s_idx])]
+        state, reward, done, _ = env.step(action)
+        env.render()
+
+    env.add_policy(best_policy)
+    env.render(animation_interval=30)
