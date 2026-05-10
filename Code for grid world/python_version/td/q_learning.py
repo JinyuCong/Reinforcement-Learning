@@ -4,7 +4,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np
 from src.grid_world import GridWorld
-from td.utils import state_to_index
+from td.utils import state_to_index, epsilon_greedy
 
 env = GridWorld()
 
@@ -18,14 +18,14 @@ env = GridWorld()
 #   Q-learning（off-policy）：Q 更新用的是 max Q(s',·)，与实际选的动作无关
 #
 # 更新公式（每步执行）：
-#   Q(s,a) ← Q(s,a) + α * [r + γ * max_a' Q(s',·) - Q(s,a)]
+#   Q(s,a) ← Q(s,a) - α * [Q(s,a) - (r + γ * max_a' Q(s',·))]
 #
 # 算法思路（和 Sarsa 几乎一样，只改 TD target）：
 #   for ep in range(num_episodes):
 #     s = env.reset()
 #     while not done（最多200步）:
 #       用 ε-greedy 选 a，执行得到 r, s'
-#       Q[s,a] += alpha * (r + gamma * max(Q[s']) - Q[s,a])  ← 唯一区别
+#       Q[s,a] -= alpha * (Q[s,a] - (r + gamma * max(Q[s'])))  ← 唯一区别
 #       用 ε-greedy 更新 policy_matrix[s]
 #       s ← s'
 # ================================================================
@@ -41,12 +41,35 @@ def q_learning(env, num_episodes=5000, alpha=0.1, gamma=0.9, epsilon_start=1.0, 
     # 和 Sarsa 代码几乎一样，只有 TD target 不同：
     #   Sarsa:      r + gamma * Q[s', a']
     #   Q-learning: r + gamma * np.max(Q[s'])
+    for ep in range(num_episodes):
+        epsilon = epsilon_start + (epsilon_end - epsilon_start) * ep / (num_episodes - 1)
+        
+        state, _ = env.reset()
+        state_idx = state_to_index(state, env_size=env.env_size)
+        
+        step = 0
+        done = False
+        while not done and step < 200:
+            state_action_probs = epsilon_greedy(epsilon, Q, policy_matrix, state_idx)
+            action_idx = np.random.choice(num_actions, p=state_action_probs)
+            action = env.action_space[action_idx]
+            
+            next_state, reward, done, _ = env.step(action)
+            next_state_idx = state_to_index(next_state, env_size=env.env_size)
+            
+            # Q(s,a) ← Q(s,a) - α * [Q(s,a) - (r + γ * max_a' Q(s',·))]
+            Q[state_idx, action_idx] -= alpha * (Q[state_idx, action_idx] - (reward + gamma * np.max(Q[next_state_idx])))
+            
+            policy_matrix[state_idx] = epsilon_greedy(epsilon, Q, policy_matrix, state_idx)
+            
+            state_idx = next_state_idx
+            step += 1
 
     return Q, policy_matrix
 
 
 if __name__ == "__main__":
-    Q, best_policy = q_learning(env, num_episodes=5000)
+    Q, best_policy = q_learning(env, num_episodes=500)
 
     state, _ = env.reset()
     env.render()
@@ -58,4 +81,4 @@ if __name__ == "__main__":
         env.render()
 
     env.add_policy(best_policy)
-    env.render(animation_interval=3)
+    env.render(animation_interval=300)
