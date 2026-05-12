@@ -63,31 +63,32 @@ class GridWorld():
     
         
     def _get_next_state_and_reward(self, state, action):
-        x, y = state
-        new_state = tuple(np.array(state) + np.array(action))
-        if y + 1 > self.env_size[1] - 1 and action == (0,1):    # down
-            y = self.env_size[1] - 1
-            reward = self.reward_forbidden  
-        elif x + 1 > self.env_size[0] - 1 and action == (1,0):  # right
-            x = self.env_size[0] - 1
-            reward = self.reward_forbidden  
-        elif y - 1 < 0 and action == (0,-1):   # up
-            y = 0
-            reward = self.reward_forbidden  
-        elif x - 1 < 0 and action == (-1, 0):  # left
-            x = 0
-            reward = self.reward_forbidden 
-        elif new_state == self.target_state:  # stay
-            x, y = self.target_state
+        x, y = state  # x为第几列y为第几行
+        new_state = np.array(state) + np.array(action)
+        
+        # 若新state的y超过了地图的行数，那么就撞墙了并且reward为forbidden reward
+        if new_state[1] > self.env_size[1] - 1 or new_state[1] < 0:
+            new_state = np.array([x, y])
+            reward = self.reward_forbidden
+            
+        elif new_state[0] > self.env_size[0] - 1 or new_state[0] < 0:
+            new_state = np.array([x, y])
+            reward = self.reward_forbidden
+        
+        elif all(new_state == np.array(self.target_state)):
+            new_state = self.target_state
             reward = self.reward_target
-        elif new_state in self.forbidden_states:  # stay
-            x, y = state
-            reward = self.reward_forbidden        
+            
+        elif tuple(new_state) in self.forbidden_states:
+            new_state = np.array([x, y])
+            reward = self.reward_forbidden
+        
         else:
-            x, y = new_state
             reward = self.reward_step
             
-        return (x, y), reward
+        new_state = tuple(new_state)
+        
+        return new_state, reward
         
 
     def _is_done(self, state):
@@ -158,3 +159,4 @@ class GridWorld():
             x = i % self.env_size[0]
             y = i // self.env_size[0]
             self.ax.text(x, y, str(value), ha='center', va='center', fontsize=10, color='black')
+    

@@ -25,7 +25,7 @@ env = GridWorld()
 #   policy_matrix   : 当前策略，改进后每行是 one-hot（确定性贪心）
 # ================================================================
 
-def mc_basic(env, num_iterations=20, num_episodes=500, gamma=0.9):
+def mc_basic(env, num_iterations=20, num_episodes=1000, gamma=0.9):
     num_states = env.num_states
     num_actions = len(env.action_space)
 
@@ -39,23 +39,18 @@ def mc_basic(env, num_iterations=20, num_episodes=500, gamma=0.9):
     # 初始策略：均匀随机
     policy_matrix = np.ones((num_states, num_actions)) / num_actions
 
-    for _ in range(num_iterations):
-        returns_sum = np.zeros((num_states, num_actions))
-        counts = np.zeros((num_states, num_actions))
-        for ep in range(num_episodes):
-            episode = generate_episode(env, policy_matrix)
-            G = 0
-            for state, action_index, reward in reversed(episode):
-                G = reward + gamma * G
-                returns_sum[state, action_index] += G
-                counts[state, action_index] += 1
+    for ep in range(num_episodes):
+        episode = generate_episode(env, policy_matrix)
+        G = 0
+        for state_idx, action_index, reward in reversed(episode):
+            G = reward + gamma * G
+            returns_sum[state_idx, action_index] += G
+            counts[state_idx, action_index] += 1
+            Q[state_idx, action_index] = returns_sum[state_idx, action_index] / counts[state_idx, action_index]
 
-        Q = returns_sum / (counts + 1e-10)
-        best_action_indices = np.argmax(Q, axis=1)
-        policy_matrix = np.zeros((num_states, num_actions))
-        for s in range(num_states):
-            best_action = best_action_indices[s]
-            policy_matrix[s, best_action] = 1
+            best_action = np.argmax(Q[state_idx])
+            policy_matrix[state_idx] = np.zeros(num_actions)
+            policy_matrix[state_idx, best_action] = 1
 
     return Q, policy_matrix
 

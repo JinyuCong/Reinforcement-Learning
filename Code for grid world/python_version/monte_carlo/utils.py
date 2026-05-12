@@ -12,7 +12,7 @@ def state_to_index(state, env_size):
 
 def generate_episode(env, policy_matrix):
     episode = []
-    state = env.reset()[0]
+    state, _ = env.reset()
     max_steps = 200
 
     for _ in range(max_steps):
