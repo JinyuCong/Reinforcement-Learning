@@ -1,0 +1,102 @@
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
+import numpy as np
+from src.grid_world import GridWorld
+from function_approximation.utils import state_to_index, get_features, NUM_FEATURES
+
+env = GridWorld()
+
+# ================================================================
+# TD(0) with Linear Function Approximation —— 策略评估
+# ================================================================
+# 目标：给定一个固定策略，用线性函数近似估计 V(s)
+#
+# 用线性函数近似代替 V 表：
+#   V(s; w) = φ(s)^T w
+#   φ(s) ∈ R^d 是状态特征向量（多项式特征，d=6）
+#   w ∈ R^d 是待学习的权重向量
+#
+# 与表格型 TD(0) 的对比：
+#   表格型：直接更新 V[s]
+#   函数近似：更新 w（参数共享，可泛化）
+#
+# TD 误差（和表格型完全一样）：
+#   δ = r + γ * V(s'; w) - V(s; w)
+#     = r + γ * φ(s')^T w - φ(s)^T w
+#
+# 参数更新（对 w 的梯度方向 = φ(s)）：
+#   w += α * δ * φ(s)
+#
+# 算法思路：
+#   for ep in range(num_episodes):
+#     s = env.reset()，计算 φ(s)
+#     while not done（最多 200 步）:
+#       按策略选动作，执行 env.step 得到 r, s', done
+#       计算 φ(s')
+#       δ = r + γ * (1 - done) * φ(s')^T w - φ(s)^T w
+#       w += α * δ * φ(s)
+#       s ← s'，φ ← φ(s')
+# ================================================================
+
+def td_zero_fa(env, num_episodes=500, alpha=0.01, gamma=0.9):
+    num_states = env.num_states
+    num_actions = len(env.action_space)
+
+    # 权重向量 w：shape (NUM_FEATURES,)，初始全 0
+    w = np.zeros(NUM_FEATURES)
+
+    # 固定的均匀随机策略（和表格型 TD(0) 一致）
+    policy_matrix = np.ones((num_states, num_actions)) / num_actions
+
+    # 你来写
+    # 提示：
+    #   get_features(state, env.env_size)  → φ(s)，shape (NUM_FEATURES,)
+    #   V(s) = phi @ w                     → 标量
+    #   策略选动作（和表格型 TD(0) 一样）：
+    #       x, y = state
+    #       state_idx = x + y * env.env_size[0]
+    #       action_idx = np.random.choice(num_actions, p=policy_matrix[state_idx])
+    for ep in range(num_episodes):
+        state, _ = env.reset()
+        
+        phi = get_features(state, env.env_size)
+
+        done = False
+        step = 0
+        while not done and step < 200:
+            state_idx = state_to_index(state, env.env_size)
+
+            action_idx = np.random.choice(num_actions, p=policy_matrix[state_idx])
+            action = env.action_space[action_idx]
+
+            next_state, reward, done, _ = env.step(action)
+            next_phi = get_features(next_state, env.env_size)
+            delta = reward + gamma * (1 - done) * (next_phi @ w) - (phi @ w)
+
+            w += alpha * delta * phi
+
+            state = next_state
+            phi = next_phi
+
+            step += 1
+
+    return w
+
+
+if __name__ == "__main__":
+    w = td_zero_fa(env, num_episodes=500)
+
+    # 从 w 重建每个状态的 V 值向量，用于可视化
+    V = np.zeros(env.num_states)
+    for s in range(env.num_states):
+        x = s % env.env_size[0]
+        y = s // env.env_size[0]
+        phi = get_features((x, y), env.env_size)
+        V[s] = phi @ w
+
+    state, _ = env.reset()
+    env.render()
+    env.add_state_values(V)
+    env.render(animation_interval=30)
