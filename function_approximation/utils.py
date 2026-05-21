@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 from collections import deque
 import random
+import cv2
 
 # ----------------------------------------------------------------
 # 线性函数近似用：多项式特征
@@ -81,7 +82,7 @@ class QNetwork(nn.Module):
 
     def forward(self, x):
         return self.net(x)
-
+    
 
 class ReplayBuffer:
     """
@@ -108,3 +109,70 @@ class ReplayBuffer:
 
     def __len__(self):
         return len(self.buffer)
+    
+
+# ----------------------------------------------------------------
+# 用于训练DQN玩打砖块的游戏的CNN网络
+# ----------------------------------------------------------------
+    
+class DQN_CNN(nn.Module):
+    def __init__(self, num_actions):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(4, 32, 8, stride=4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 4, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, 3, stride=1),
+            nn.ReLU(),
+        )
+        self.fc = nn.Sequential(
+            nn.Linear(64 * 7 * 7, 512),
+            nn.ReLU(),
+            nn.Linear(512, num_actions),
+        )
+    
+    def forward(self, x):
+        x = self.conv(x).flatten(1)
+        return self.fc(x)
+    
+
+def preprocess_frame(state):
+    state = np.asarray(state, dtype=np.uint8)
+    gray = cv2.cvtColor(state, cv2.COLOR_RGB2GRAY)  # (210, 160, 3) -> (210, 160)
+    resized = cv2.resize(gray, (84, 84))  # (210, 160) -> (84, 84)
+    return resized.astype(np.float32) / 255.0  # (84, 84) 归一化
+
+
+class FrameStack:
+    def __init__(self, n=4):
+        self.n = n
+        self.frames = deque(maxlen=n)
+    
+    def reset(self, state):
+        frame = preprocess_frame(state)
+        for _ in range(self.n):
+            self.frames.append(frame)
+        return self._get_state()
+    
+    def step(self, state):
+        self.frames.append(preprocess_frame(state))
+        return self._get_state()
+    
+    def _get_state(self):
+        return np.stack(self.frames, axis=0)  # -> (4, 84, 84)
+    
+
+if __name__ == "__main__":
+    net = DQN_CNN(num_actions=4)
+    stk = FrameStack()
+    
+    frame = np.random.randint(0, 255, (210, 160, 3))
+    initial_states = torch.FloatTensor(stk.reset(frame)).unsqueeze(0)
+    print(initial_states.shape)
+    
+    
+    out = net(initial_states)
+    print(out.shape)
+    
+    

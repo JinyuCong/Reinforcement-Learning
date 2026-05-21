@@ -1,0 +1,182 @@
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
+import numpy as np
+import torch
+import torch.nn as nn
+
+import ale_py
+import gymnasium as gym
+
+from function_approximation.utils import ReplayBuffer, DQN_CNN, FrameStack
+
+gym.register_envs(ale_py)
+env = gym.make("ALE/Breakout-v5", render_mode="human")
+device = torch.device("cuda") if torch.cuda.is_available() else "cpu"
+
+# ================================================================
+# DQN —— Deep Q-Network（Deep Q-learning with Experience Replay）
+# ================================================================
+# Q(s, a; θ) 用神经网络近似：输入归一化状态 [x̄, ȳ]，输出所有动作的 Q 值
+#
+# 两大关键机制：
+#   1. 经验回放（Experience Replay）
+#      - 将每步 (s, a, r, s', done) 存入 ReplayBuffer
+#      - 训练时随机采样 mini-batch，打破时序相关性，稳定训练
+#
+#   2. 目标网络（Target Network）
+#      - 维护两个网络：在线网络 q_net(θ) 和目标网络 target_net(θ⁻)
+#      - TD target 由 target_net 计算，避免"追逐移动目标"
+#      - 每隔 target_update_freq 步将 θ 复制到 θ⁻（硬更新）
+#
+# 损失函数（MSE）：
+#   y = r + γ * max_a' Q(s', a'; θ⁻)    （未终止）
+#   y = r                                 （终止状态）
+#   L(θ) = (y - Q(s, a; θ))²
+#
+# 算法思路：
+#   for ep in range(num_episodes):
+#     s = env.reset()
+#     while not done（最多 200 步）:
+#       用 ε-greedy 选 a（基于 q_net）
+#       执行 a，得到 r, s', done
+#       buffer.push(s, a, r, s', done)
+#       if len(buffer) >= batch_size:
+#         从 buffer 随机采样一个 mini-batch
+#         用 target_net 计算 TD target y（注意 done 掩码）
+#         计算 loss = MSE(q_net(s)[a], y)
+#         optimizer.zero_grad(); loss.backward(); optimizer.step()
+#       每隔 target_update_freq 步：target_net.load_state_dict(q_net.state_dict())
+#       s ← s'
+#       step += 1
+#
+# 数据结构：
+#   q_net      : 在线网络，持续被梯度更新
+#   target_net : 目标网络，定期从 q_net 复制，计算 TD target 时不参与梯度
+#   buffer     : ReplayBuffer，存储经验
+#   optimizer  : Adam
+# ================================================================
+
+def dqn(env, num_episodes=1000, lr=1e-4, gamma=0.99,
+        epsilon_start=1.0, epsilon_end=0.05,
+        batch_size=64, buffer_capacity=100000,
+        target_update_freq=1000):
+
+    num_actions = int(env.action_space.n)
+    
+    # 在线网络 & 目标网络，初始参数相同
+    q_net      = DQN_CNN(num_actions=num_actions).to(device)
+    target_net = DQN_CNN(num_actions=num_actions).to(device)
+    target_net.load_state_dict(q_net.state_dict())
+    target_net.eval()   # 目标网络不参与梯度计算
+
+    optimizer = torch.optim.Adam(q_net.parameters(), lr=lr)
+    loss_fn   = nn.MSELoss()
+    buffer    = ReplayBuffer(capacity=buffer_capacity)
+    frame_stack = FrameStack(n=4)
+
+    step_count = 0  # 全局步数计数器，用于触发 target_net 更新
+
+    # 你来写
+    # 提示：
+    #   state_to_tensor(state, env.env_size)
+    #       → torch.FloatTensor，shape (1, 2)，用于喂给网络
+    #
+    #   ε-greedy 动作选择：
+    #       if np.random.rand() < epsilon:
+    #           action_idx = np.random.randint(num_actions)
+    #       else:
+    #           with torch.no_grad():
+    #               action_idx = q_net(state_tensor).argmax().item()
+    #
+    #   采样 mini-batch 并计算 loss：
+    #       states_b, actions_b, rewards_b, next_states_b, dones_b = buffer.sample(batch_size)
+    #       # 转 tensor（states_b 已经是 shape (batch, 2) 的 float32）
+    #       states_t     = torch.FloatTensor(states_b)
+    #       next_states_t= torch.FloatTensor(next_states_b)
+    #       rewards_t    = torch.FloatTensor(rewards_b)
+    #       dones_t      = torch.FloatTensor(dones_b)
+    #       actions_t    = torch.LongTensor(actions_b)
+    #       # 当前 Q 值：q_net(states_t) 形状 (batch, num_actions)，取实际执行的动作
+    #       q_pred = q_net(states_t).gather(1, actions_t.unsqueeze(1)).squeeze(1)
+    #       # TD target（target_net，不参与梯度）
+    #       with torch.no_grad():
+    #           q_next = target_net(next_states_t).max(1).values
+    #           y = rewards_t + gamma * q_next * (1 - dones_t)
+    #       loss = loss_fn(q_pred, y)
+    #
+    #   buffer.push 时，state 应存归一化数组，可用：
+    #       np.array([x/(W-1), y/(H-1)])
+    for ep in range(num_episodes):
+        epsilon = epsilon_start + (epsilon_end - epsilon_start) * ep / (num_episodes - 1)
+
+        state, info = env.reset()  # state : (210, 160, 3)
+        prev_lives = info['lives']
+        state_frames = frame_stack.reset(state)  # (4, 84, 84)
+
+        done = False
+        
+        while not done:
+            state_tensor = torch.FloatTensor(state_frames).unsqueeze(0).to(device)  # (1, 4, 84, 84) (1, frames, H, W)
+
+            # 用 ε-greedy 选 a（基于 q_net）
+            if np.random.rand() < epsilon:
+                action = np.random.randint(num_actions)
+            else:
+                with torch.no_grad():
+                    action = q_net(state_tensor).argmax().item()
+
+            # 执行 a，得到 r, s', done
+            next_state, reward, terminated, truncated, info = env.step(action)  # next_state : (210, 160, 3)
+            done = terminated or truncated
+            
+            if info.get('lives', 0) < prev_lives:
+                reward = -1
+                
+            prev_lives = info['lives']
+            
+            next_state_frames = frame_stack.step(next_state)  # (4, 84, 84)
+
+            # buffer.push(s, a, r, s', done)
+            buffer.push(state_frames, action, reward, next_state_frames, done)
+
+            if len(buffer) >= batch_size:
+                # 从 buffer 随机采样一个 mini-batch
+                states_b, actions_b, rewards_b, next_states_b, dones_b = buffer.sample(batch_size)
+                states_t = torch.FloatTensor(states_b).to(device)  # (batch_size, frames, H, W)
+                next_states_t = torch.FloatTensor(next_states_b).to(device)  # (batch_size, frames, H, W)
+                rewards_t = torch.FloatTensor(rewards_b).to(device)
+                dones_t = torch.FloatTensor(dones_b).to(device)
+                actions_t = torch.LongTensor(actions_b).to(device)
+
+                # 预测这一个batch的每个state的每个action对应的Q值
+                # q_net(states_t) : (batch_size, num_actions)
+                # gather(1, actions_t.unsqueeze(1)) : 沿着第一维将actions_t对应的那些actions的index挑出来
+                q_pred = q_net(states_t).gather(1, actions_t.unsqueeze(1)).squeeze(1)  # (batch_size,)
+
+                # TD target（target_net，不参与梯度）
+                with torch.no_grad():
+                    q_next = target_net(next_states_t).max(1).values
+                    life_lost = info.get('lives', 0) < prev_lives
+                    y = rewards_t + gamma * q_next * (1 - dones_t) * (1 - life_lost)
+                
+                loss = loss_fn(q_pred, y)
+                print(f"Global step {step_count} | Loss : {loss}")
+                
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+            
+            if step_count % target_update_freq == 0:
+                target_net.load_state_dict(q_net.state_dict())
+            
+            state_frames = next_state_frames
+            step_count += 1
+            
+    return q_net
+
+
+if __name__ == "__main__":
+    q_net = dqn(env, num_episodes=1000)
+    
