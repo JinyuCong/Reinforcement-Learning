@@ -1,49 +1,87 @@
-# Reinforcement Learning Practice
+# Reinforcement Learning
 
-Personal practice code based on the textbook and course
-**[Mathematical Foundation of Reinforcement Learning](https://github.com/MathFoundationRL/Book-Mathematical-Foundation-of-Reinforcement-Learning)**
-by Shiyu Zhao.
+Implementation of reinforcement learning algorithms from scratch, organized by method. Each file contains detailed algorithm comments and code structure.
 
-## Structure
+## Environments
 
-```
-Code for grid world/python_version/
+- **GridWorld**: Custom 12×4 grid world with forbidden zones and a target, used for discrete control algorithms
+- **CartPole-v1**: Inverted pendulum balancing, used for Policy Gradient algorithms
+- **ALE/Breakout-v5**: Atari Breakout game, used for deep reinforcement learning algorithms
+
+## Project Structure
+
+```text
 ├── src/
-│   └── grid_world.py          # Grid world environment
+│   └── grid_world.py          # GridWorld environment
 ├── examples/
-│   ├── arguments.py           # Environment configuration
-│   └── example_grid_world.py  # Basic usage example
-├── monte_carlo/
-│   ├── utils.py               # Shared utilities (state_to_index, generate_episode)
-│   ├── mc_prediction.py       # Every-Visit MC Prediction
-│   ├── mc_basic.py            # MC Basic
+│   └── arguments.py           # GridWorld environment configuration
+├── monte_carlo/               # Monte Carlo methods
+│   ├── mc_prediction.py       # MC Prediction (policy evaluation)
+│   ├── mc_basic.py            # MC basic control
 │   ├── mc_exploring_starts.py # MC Exploring Starts
-│   └── mc_epsilon_greedy.py   # MC ε-Greedy (On-Policy Control)
-└── td/
-    ├── utils.py               # Shared utilities
-    ├── td_zero.py             # TD(0) — state value estimation
-    ├── sarsa.py               # Sarsa — on-policy TD control
-    └── q_learning.py          # Q-Learning — off-policy TD control
+│   └── mc_epsilon_greedy.py   # MC epsilon-greedy control
+├── td/                        # Temporal Difference methods
+│   ├── td_zero.py             # TD(0) prediction
+│   ├── sarsa.py               # Sarsa (on-policy)
+│   ├── q_learning.py          # Q-Learning (off-policy)
+│   ├── expected_sarsa.py      # Expected Sarsa
+│   └── n_step_sarsa.py        # N-step Sarsa
+├── function_approximation/    # Function approximation methods
+│   ├── td_zero_fa.py          # TD(0) + linear function approximation
+│   ├── sarsa_fa.py            # Sarsa + linear function approximation
+│   ├── q_learning_fa.py       # Q-Learning + linear function approximation
+│   ├── dqn_GridWorld.py       # DQN (GridWorld)
+│   ├── dqn_BreakOut.py        # DQN (Breakout)
+│   └── utils.py               # Networks, ReplayBuffer, FrameStack, etc.
+└── policy_gradient/           # Policy Gradient methods
+    ├── reinforce.py           # REINFORCE (MC Policy Gradient)
+    ├── actor_critic.py        # Actor-Critic (single-step TD, Breakout)
+    ├── a2c.py                 # A2C (Advantage Actor-Critic, CartPole)
+    ├── ppo.py                 # PPO (Proximal Policy Optimization, Breakout)
+    └── utils.py               # LinearActor/Critic, CNNActor/Critic, etc.
 ```
 
-## Environment
+## Algorithm Progression
 
-5×5 Grid World with:
-- Start: `(2, 2)`, Target: `(4, 4)`
-- Forbidden states: `(2,1)`, `(3,3)`, `(1,3)`
-- Actions: up / down / left / right / stay
-- Rewards: target `+10`, forbidden/boundary `-5`, step `-1`
+```text
+Tabular Methods
+  MC Prediction → MC Control (Exploring Starts → epsilon-greedy)
+  TD(0) → Sarsa → Q-Learning → Expected Sarsa → N-step Sarsa
+
+Function Approximation
+  Linear FA (TD/Sarsa/Q-Learning) → DQN (experience replay + target network)
+
+Policy Gradient
+  REINFORCE → Actor-Critic → A2C → PPO
+```
+
+## Installation
+
+```bash
+pip install gymnasium torch numpy matplotlib opencv-python
+pip install gymnasium[atari] ale-py
+pip install autorom[accept-rom-license]
+AutoROM --accept-license
+```
 
 ## Usage
 
-Run any algorithm directly:
-
 ```bash
-cd "Code for grid world/python_version"
-python monte_carlo/mc_basic.py
-python td/sarsa.py
+# Monte Carlo
+python monte_carlo/mc_prediction.py
+
+# Temporal Difference
+python td/q_learning.py
+
+# DQN GridWorld
+python function_approximation/dqn_GridWorld.py
+
+# DQN Breakout
+python function_approximation/dqn_BreakOut.py
+
+# Policy Gradient
+python policy_gradient/reinforce.py
+python policy_gradient/a2c.py
+python policy_gradient/actor_critic.py
+python policy_gradient/ppo.py
 ```
-
-## Reference
-
-- Textbook repo: https://github.com/MathFoundationRL/Book-Mathematical-Foundation-of-Reinforcement-Learning
