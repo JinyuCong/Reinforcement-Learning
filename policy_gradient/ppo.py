@@ -12,10 +12,10 @@ import gymnasium as gym
 import cv2
 from collections import deque
 
-from policy_gradient.utils import CNNActor, CNNCritic, FrameStack
+from policy_gradient.utils import LinearActor, LinearCritic
 
 gym.register_envs(ale_py)
-env = gym.make("ALE/Breakout-v5", render_mode="human")
+env = gym.make("CartPole-v1", render_mode="human")
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # ================================================================
@@ -83,55 +83,38 @@ class UpdateDataset(Dataset):
 def ppo(env, num_updates=500, steps_per_update=256,
         lr=3e-4, gamma=0.99, clip_eps=0.2,
         ppo_epochs=4, batch_size=64, value_coef=0.5):
-    
+    state_dim = env.observation_space.shape[0]
     num_actions = int(env.action_space.n)
     
-    actor_net = CNNActor(num_actions).to(device)
-    critic_net = CNNCritic().to(device)
+    actor_net = LinearActor(state_dim, num_actions).to(device)
+    critic_net = LinearCritic(state_dim).to(device)
     actor_optimizer = torch.optim.Adam(actor_net.parameters(), lr=lr)
     critic_optimizer = torch.optim.Adam(critic_net.parameters(), lr=lr)
     
-    frame_stack = FrameStack(n=4)
-    
-    state, info = env.reset()
-    prev_lives = info['lives']
-    state_frames = frame_stack.reset(state)
+    state, _ = env.reset()
     
     for update in range(num_updates):
         collection = []  # 用来储存 (s, a, r, done, log_prob_old, V(s))
-        epsilon = max(0.05, 1.0 - update / (num_updates * 0.5))
         for step in range(steps_per_update):
-            state_t = torch.FloatTensor(state_frames).unsqueeze(0).to(device)  # (1, 4, 84, 84)
-            log_probs = actor_net(state_t)  # (1, num_actions)
-            
-            if np.random.rand() < epsilon:
-                action = env.action_space.sample()
-            else:
-                action = torch.multinomial(log_probs.exp(), 1).item()
-                
-            log_action_p = log_probs[0, action].detach()
-    
-            next_state, reward, terminated, truncated, info = env.step(action)
+            state_t = torch.FloatTensor(state).unsqueeze(0).to(device)
+            with torch.no_grad():
+                log_probs = actor_net(state_t)       # (1, num_actions)
+                state_value = critic_net(state_t)    # V(s)
+
+            action = torch.multinomial(log_probs.exp(), 1).item()
+            log_action_p = log_probs[0, action]
+
+            next_state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
-            
-            if info.get('lives', 0) < prev_lives:
-                reward -= 1
-            prev_lives = info['lives']
-            
-            next_state_frames = frame_stack.step(next_state)
-            # next_state_t = torch.FloatTensor(next_state_frames).unsqueeze(0)
-            
-            state_value = critic_net(state_t)  # V(s)
             
             # 存储 (s, a, r, done, log_prob_old, V(s))
             collection.append((state_t.squeeze(0), action, reward, done, log_action_p, state_value.squeeze(0)))
             
-            state_frames = next_state_frames
+            state = next_state
             # 当到达终点后重置env
             if done:
-                state, info = env.reset()
-                state_frames = frame_stack.reset(state)
-        
+                state, _ = env.reset()
+         
         # 计算每步的优势 A_t 和 return G_t
         G = 0
         returns = []
@@ -154,21 +137,19 @@ def ppo(env, num_updates=500, steps_per_update=256,
         update_loss = 0
         for epoch in range(ppo_epochs):
             for batch in dataloader:
-                state = batch['state'].to(device)  # (batch, frames, H, W)
-                action = batch['action'].reshape(-1, 1).to(device)  # (batch, 1)
-                done = batch['done'].reshape(-1, 1).to(device)  # (batch, 1)
-                log_pi_old = batch['log_action_p'].reshape(-1, 1).to(device)  # (batch, 1)
-                V_old = batch['state_value'].to(device)  # (batch, 1)
-                G = batch['G'].reshape(-1, 1).to(device)  # (batch, 1)
-                A = batch['A'].reshape(-1, 1).to(device)  # (batch, 1)
-                
-                log_probs: torch.FloatTensor = actor_net(state)
+                s      = batch['state'].to(device)
+                action = batch['action'].reshape(-1, 1).to(device)
+                log_pi_old = batch['log_action_p'].reshape(-1, 1).to(device)
+                G = batch['G'].reshape(-1, 1).to(device)
+                A = batch['A'].reshape(-1, 1).to(device)
+
+                log_probs: torch.FloatTensor = actor_net(s)
                 log_pi_new = log_probs.gather(1, action)
                 # r_t = exp(log_π_new(a|s) - log_π_old(a|s))
                 ratio = torch.exp(log_pi_new - log_pi_old)  # (batch, 1)
                 L_clip = torch.min(ratio * A, torch.clamp(ratio, 1-clip_eps, 1+clip_eps) * A).mean()
-                
-                V_new = critic_net(state)
+
+                V_new = critic_net(s)
                 L_value = ((V_new - G) ** 2).mean()
                 
                 loss = -L_clip + value_coef * L_value
@@ -188,4 +169,4 @@ def ppo(env, num_updates=500, steps_per_update=256,
             
 
 if __name__ == "__main__":
-    actor = ppo(env, num_updates=500, steps_per_update=1024)
+    actor = ppo(env, num_updates=500, steps_per_update=256)
